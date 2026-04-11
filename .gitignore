@@ -133,7 +133,7 @@ data/
 *.npy
 *.npz
 *.pth.tar
-
+*.png
 # Logs
 *.log
 logs/
