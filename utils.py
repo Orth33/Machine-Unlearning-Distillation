@@ -23,6 +23,7 @@ from models import *
 
 __all__ = [
     "setup_model_dataset",
+    "build_model",
     "AverageMeter",
     "warmup_lr",
     "save_checkpoint",
@@ -154,6 +155,83 @@ def dataset_convert_to_test(dataset, args=None):
         )
     dataset.transform = test_transform
     dataset.train = False
+
+
+def build_model(args):
+    if args.dataset == "cifar10":
+        classes = 10
+        normalization = NormalizeByChannelMeanStd(
+            mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]
+        )
+        if args.imagenet_arch:
+            model = model_dict[args.arch](num_classes=classes, imagenet=True)
+        elif args.arch == "swin_t":
+            model = swin_t(
+                window_size=4, num_classes=10, downscaling_factors=(2, 2, 2, 1)
+            )
+        else:
+            model = model_dict[args.arch](num_classes=classes)
+    elif args.dataset == "svhn":
+        classes = 10
+        normalization = NormalizeByChannelMeanStd(
+            mean=[0.4377, 0.4438, 0.4728], std=[0.1980, 0.2010, 0.1970]
+        )
+        if args.imagenet_arch:
+            model = model_dict[args.arch](num_classes=classes, imagenet=True)
+        else:
+            model = model_dict[args.arch](num_classes=classes)
+    elif args.dataset in ("cifar100", "cifar100_no_val"):
+        classes = 100
+        normalization = NormalizeByChannelMeanStd(
+            mean=[0.5071, 0.4866, 0.4409], std=[0.2673, 0.2564, 0.2762]
+        )
+        if args.imagenet_arch:
+            model = model_dict[args.arch](num_classes=classes, imagenet=True)
+        else:
+            try:
+                model = model_dict[args.arch](
+                    num_classes=classes, pretrained=args.pretrained
+                )
+            except TypeError:
+                model = model_dict[args.arch](num_classes=classes)
+    elif args.dataset in ("cifar10_no_val", "TinyImagenet"):
+        classes = 10 if args.dataset == "cifar10_no_val" else 200
+        mean_std = (
+            ([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616])
+            if args.dataset == "cifar10_no_val"
+            else ([0.4802, 0.4481, 0.3975], [0.2770, 0.2691, 0.2821])
+        )
+        normalization = NormalizeByChannelMeanStd(mean=mean_std[0], std=mean_std[1])
+        if args.imagenet_arch:
+            model = model_dict[args.arch](num_classes=classes, imagenet=True)
+        else:
+            try:
+                model = model_dict[args.arch](
+                    num_classes=classes, pretrained=args.pretrained
+                )
+            except TypeError:
+                model = model_dict[args.arch](num_classes=classes)
+    elif args.dataset == "ham10000":
+        classes = 7
+        normalization = NormalizeByChannelMeanStd(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        )
+        model = model_dict[args.arch](
+            num_classes=classes,
+            imagenet=args.imagenet_arch or args.pretrained,
+            pretrained=args.pretrained,
+        )
+    elif args.dataset == "imagenet":
+        classes = 1000
+        normalization = NormalizeByChannelMeanStd(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        )
+        model = model_dict[args.arch](num_classes=classes, imagenet=True)
+    else:
+        raise ValueError("Dataset not supprot yet !")
+
+    model.normalize = normalization
+    return model
 
 
 def setup_model_dataset(args):

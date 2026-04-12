@@ -1,5 +1,6 @@
 import copy
 import os
+import time
 from collections import OrderedDict
 
 import torch
@@ -16,6 +17,7 @@ from trainer import validate
 
 
 def main():
+    total_start_time = time.time()
     args = arg_parser.parse_args()
 
     if torch.cuda.is_available():
@@ -125,31 +127,41 @@ def main():
     criterion = utils.build_training_criterion(args, retain_loader.dataset, device)
 
     evaluation_result = None
+    resume_state = None
 
     if args.resume:
         checkpoint = unlearn.load_unlearn_checkpoint(model, device, args)
 
     if args.resume and checkpoint is not None:
-        model, evaluation_result = checkpoint
+        model, evaluation_result, resume_state = checkpoint
     else:
-        checkpoint = torch.load(args.mask, map_location=device)
-        if "state_dict" in checkpoint.keys():
-            checkpoint = checkpoint["state_dict"]
-        current_mask = pruner.extract_mask(checkpoint)
-        pruner.prune_model_custom(model, current_mask)
-        pruner.check_sparsity(model)
+        checkpoint = None
 
-        if (
-            args.unlearn != "retrain"
-            and args.unlearn != "retrain_sam"
-            and args.unlearn != "retrain_ls"
-        ):
-            model.load_state_dict(checkpoint, strict=False)
-
+    if resume_state is not None:
+        args._resume_unlearn_state = resume_state
         unlearn_method = unlearn.get_unlearn_method(args.unlearn)
-
         unlearn_method(unlearn_data_loaders, model, criterion, args)
         unlearn.save_unlearn_checkpoint(model, None, args)
+    else:
+        if checkpoint is None:
+            checkpoint = torch.load(args.mask, map_location=device)
+            if "state_dict" in checkpoint.keys():
+                checkpoint = checkpoint["state_dict"]
+            current_mask = pruner.extract_mask(checkpoint)
+            pruner.prune_model_custom(model, current_mask)
+            pruner.check_sparsity(model)
+
+            if (
+                args.unlearn != "retrain"
+                and args.unlearn != "retrain_sam"
+                and args.unlearn != "retrain_ls"
+            ):
+                model.load_state_dict(checkpoint, strict=False)
+
+            unlearn_method = unlearn.get_unlearn_method(args.unlearn)
+
+            unlearn_method(unlearn_data_loaders, model, criterion, args)
+            unlearn.save_unlearn_checkpoint(model, None, args)
 
     # --- Optional BN recalibration on retain set to recover accuracy ---
     if getattr(args, "bn_recalibrate_batches", 0) and args.bn_recalibrate_batches > 0:
@@ -194,7 +206,10 @@ def main():
         in distribution: retain
         out of distribution: test
         target: (, forget)"""
-    if "SVC_MIA_forget_efficacy" not in evaluation_result:
+    if (
+        "SVC_MIA_forget_efficacy" not in evaluation_result
+        or evaluation_result.get("SVC_MIA_forget_efficacy") == "skipped"
+    ):
         if getattr(args, "skip_mia", False):
             evaluation_result["SVC_MIA_forget_efficacy"] = "skipped"
             unlearn.save_unlearn_checkpoint(model, evaluation_result, args)
@@ -225,7 +240,10 @@ def main():
         in distribution: retain
         out of distribution: test
         target: (retain, test)"""
-    if "SVC_MIA_training_privacy" not in evaluation_result:
+    if (
+        "SVC_MIA_training_privacy" not in evaluation_result
+        or evaluation_result.get("SVC_MIA_training_privacy") == "skipped"
+    ):
         if getattr(args, "skip_mia", False):
             evaluation_result["SVC_MIA_training_privacy"] = "skipped"
             unlearn.save_unlearn_checkpoint(model, evaluation_result, args)
@@ -271,6 +289,12 @@ def main():
             unlearn.save_unlearn_checkpoint(model, evaluation_result, args)
 
     unlearn.save_unlearn_checkpoint(model, evaluation_result, args)
+    total_runtime = time.time() - total_start_time
+    print(
+        "Total run time: {:.2f} seconds ({:.2f} minutes / {:.2f} hours)".format(
+            total_runtime, total_runtime / 60.0, total_runtime / 3600.0
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -195,6 +195,18 @@ def parse_args():
                         help="SAM neighborhood size (rho) for retain-side repair.")
     parser.add_argument("--bn_recalibrate_batches", type=int, default=256,
                         help="Number of retain batches to use to recalibrate BatchNorm stats after unlearning; 0 disables.")
+    parser.add_argument("--kd_lambda", type=float, default=1.0,
+                        help="Weight for retain-side teacher distillation in GA_repair_v2.")
+    parser.add_argument("--distill_temperature", type=float, default=2.0,
+                        help="Temperature used for retain-side KL distillation in GA_repair_v2.")
+    parser.add_argument("--forget_warmup_epochs", type=int, default=3,
+                        help="Number of early GA_repair_v2 epochs to train classifier head only before full-model updates.")
+    parser.add_argument("--anchor_lambda_start", type=float, default=2e-5,
+                        help="Initial anchor weight for GA_repair_v2.")
+    parser.add_argument("--anchor_lambda_end", type=float, default=2e-4,
+                        help="Final anchor weight for GA_repair_v2.")
+    parser.add_argument("--forget_ce_weight", type=float, default=0.25,
+                        help="Supplemental negative-CE weight on forget batches in GA_repair_v2.")
     parser.add_argument(
         "--skip_mia",
         action="store_true",

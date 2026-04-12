@@ -10,6 +10,7 @@ from .retrain_ls import retrain_ls
 from .retrain_sam import retrain_sam
 from .Wfisher import Wfisher
 from .GA_repair import GA_repair
+from .GA_repair_v2 import GA_repair_v2
 
 
 def raw(data_loaders, model, criterion, args):
@@ -52,5 +53,7 @@ def get_unlearn_method(name):
         return GA_l1
     elif name == "GA_repair":
         return GA_repair
+    elif name == "GA_repair_v2":
+        return GA_repair_v2
     else:
         raise NotImplementedError(f"Unlearn method {name} not implemented!")

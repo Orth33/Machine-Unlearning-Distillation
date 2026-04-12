@@ -14,6 +14,10 @@ sys.path.append(".")
 from trainer import validate
 
 
+def _progress_filename():
+    return "progress.pth.tar"
+
+
 def plot_training_curve(training_result, save_dir, prefix):
     # plot training curve
     for name, result in training_result.items():
@@ -33,10 +37,37 @@ def save_unlearn_checkpoint(model, evaluation_result, args):
         args.unlearn,
         filename="eval_result.pth.tar",
     )
+    if evaluation_result is not None:
+        progress_path = os.path.join(
+            args.save_dir, f"{args.unlearn}{_progress_filename()}"
+        )
+        if os.path.exists(progress_path):
+            os.remove(progress_path)
+
+
+def save_unlearn_progress_checkpoint(model, optimizer, scheduler, epoch, args):
+    state = {
+        "state_dict": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "epoch": epoch,
+    }
+    utils.save_checkpoint(
+        state,
+        False,
+        args.save_dir,
+        args.unlearn,
+        filename=_progress_filename(),
+    )
 
 
 def load_unlearn_checkpoint(model, device, args):
-    checkpoint = utils.load_checkpoint(device, args.save_dir, args.unlearn)
+    checkpoint = utils.load_checkpoint(
+        device, args.save_dir, args.unlearn, filename=_progress_filename()
+    )
+    is_progress = checkpoint is not None
+    if checkpoint is None:
+        checkpoint = utils.load_checkpoint(device, args.save_dir, args.unlearn)
     if checkpoint is None or checkpoint.get("state_dict") is None:
         return None
 
@@ -53,13 +84,16 @@ def load_unlearn_checkpoint(model, device, args):
         model(x_rand)
 
     evaluation_result = checkpoint.get("evaluation_result")
-    return model, evaluation_result
+    if is_progress:
+        return model, evaluation_result, checkpoint
+    return model, evaluation_result, None
 
 
 def _iterative_unlearn_impl(unlearn_iter_func):
     def _wrapped(data_loaders, model, criterion, args):
         decreasing_lr = list(map(int, args.decreasing_lr.split(",")))
-        if args.rewind_epoch != 0:
+        resume_state = getattr(args, "_resume_unlearn_state", None)
+        if args.rewind_epoch != 0 and resume_state is None:
             initialization = torch.load(
                 args.rewind_pth, map_location=torch.device("cuda:" + str(args.gpu))
             )
@@ -103,11 +137,17 @@ def _iterative_unlearn_impl(unlearn_iter_func):
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, args.unlearn_epochs
             )
-        if args.rewind_epoch != 0:
+        start_epoch = 0
+        if resume_state is not None:
+            optimizer.load_state_dict(resume_state["optimizer"])
+            scheduler.load_state_dict(resume_state["scheduler"])
+            start_epoch = int(resume_state.get("epoch", 0))
+            print(f"[resume] Continuing {args.unlearn} from epoch {start_epoch}")
+        elif args.rewind_epoch != 0:
             # learning rate rewinding
             for _ in range(args.rewind_epoch):
                 scheduler.step()
-        for epoch in range(0, args.unlearn_epochs):
+        for epoch in range(start_epoch, args.unlearn_epochs):
             start_time = time.time()
             print(
                 "Epoch #{}, Learning rate: {}".format(
@@ -118,6 +158,9 @@ def _iterative_unlearn_impl(unlearn_iter_func):
                 data_loaders, model, criterion, optimizer, epoch, args
             )
             scheduler.step()
+            save_unlearn_progress_checkpoint(
+                model, optimizer, scheduler, epoch + 1, args
+            )
 
             print("one epoch duration:{}".format(time.time() - start_time))
 
