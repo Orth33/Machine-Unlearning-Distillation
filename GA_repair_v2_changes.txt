@@ -1,0 +1,206 @@
+GA_repair -> GA_repair_v2
+HAM10000 / EfficientNet-B0 unlearning changes
+
+Purpose
+
+The original GA_repair implementation could improve forgetting, but it had two major
+failure modes in our HAM10000 experiments:
+
+1. On dense models, strong forgetting often damaged retained utility too much.
+2. On sparse models, stronger settings could become numerically unstable or collapse.
+
+GA_repair_v2 was introduced to reduce the gap to the retraining gold standard while
+keeping the method computationally cheap.
+
+
+Major algorithmic changes
+
+1. Retain-side teacher distillation
+
+What changed:
+- GA_repair_v2 builds a fixed teacher model from the original checkpoint.
+- During repair steps, the student is trained not only with classification loss on
+  retained data, but also with KL distillation against the teacher logits.
+
+Why:
+- The original GA_repair repair stage only tried to fit retained labels.
+- That is weaker than explicitly preserving the original decision structure.
+- Distillation gives the model a stronger signal for what retained behavior should
+  stay unchanged.
+
+Expected effect:
+- Better retain accuracy.
+- Better validation/test stability.
+- Less destructive forgetting updates.
+
+
+2. Classifier-only warmup before full-model forgetting
+
+What changed:
+- For the first few epochs, GA_repair_v2 updates only the classifier/head parameters.
+- After the warmup period, it unlocks the full model.
+
+Why:
+- Early forget updates are high-risk because they can alter the entire feature
+  extractor before the model has a controlled way to separate forgotten data.
+- In classwise forgetting, much of the first effect should happen at the head level.
+
+Expected effect:
+- Faster early separation of the forgotten class.
+- Less catastrophic damage to shared features.
+- More stable dense and sparse training.
+
+
+3. Margin-based forget objective instead of relying only on negative CE
+
+What changed:
+- GA_repair_v2 adds a margin loss on forget batches:
+  the logit for the true forgotten class is pushed below the best competing class
+  by a target margin.
+- Negative CE is still used, but as a weaker auxiliary term.
+- Entropy maximization is kept to encourage uncertainty on forgotten samples.
+
+Why:
+- Pure negative cross-entropy can be too blunt.
+- It often pushes logits in a poorly controlled way and can overshoot.
+- A margin objective gives a more direct forgetting target: reduce the forgotten
+  class preference relative to alternatives.
+
+Expected effect:
+- More targeted classwise forgetting.
+- Better control over the forget/utility tradeoff.
+
+
+4. Scheduled anchoring instead of fixed anchoring
+
+What changed:
+- GA_repair_v2 uses a time-varying anchor weight.
+- Early epochs use a weaker anchor.
+- Later epochs use a stronger anchor.
+
+Why:
+- Early forgetting needs freedom to move away from the original solution.
+- Later repair needs stronger pullback toward useful retained behavior.
+- A single fixed anchor is a poor compromise between those two phases.
+
+Expected effect:
+- Better forgetting early.
+- Better recovery late.
+- Reduced oscillation between over-forgetting and over-repairing.
+
+
+5. BN freezing during forget-stage updates
+
+What changed:
+- BatchNorm layers are frozen during the forget stage when the option is enabled.
+- BN statistics are recalibrated afterward on retained data.
+
+Why:
+- Forget batches are small and distribution-shifted.
+- They can corrupt BN running statistics, especially for classwise forgetting.
+- This problem is worse in sparse models.
+
+Expected effect:
+- More stable optimization.
+- Less unintended degradation on retained/test data.
+
+
+6. Optional head reset for the forgotten class
+
+What changed:
+- For single-class forgetting, GA_repair_v2 can zero/reset the classifier row
+  associated with the forgotten class before unlearning.
+
+Why:
+- This gives the model a cleaner starting point for suppressing a forgotten class.
+- It is especially helpful when the forgotten class has a strong classifier bias.
+
+Expected effect:
+- Faster classwise forgetting.
+- Lower final forget accuracy when the task is to remove one class.
+
+
+7. Sparse-safe teacher construction
+
+What changed:
+- The teacher is no longer created with deepcopy(model).
+- Instead, GA_repair_v2 builds a fresh model from the architecture config,
+  reapplies the saved mask when needed, and then loads the checkpoint.
+
+Why:
+- Deep-copying the live masked/pruned model caused failures on sparse runs.
+- A clean reconstruction is safer and more reproducible.
+
+Expected effect:
+- Correct operation on both dense and sparse networks.
+
+
+8. Numerical stability protections for sparse runs
+
+What changed:
+- Added finite-value checks on logits and losses.
+- Added finite-gradient checks before optimizer steps.
+- Added gradient clipping.
+- Non-finite batches are skipped instead of poisoning the whole run.
+
+Why:
+- Sparse classwise forgetting can become unstable under strong ascent updates.
+- Once NaNs appear, all downstream metrics become invalid.
+
+Expected effect:
+- Prevents catastrophic collapse.
+- Makes sparse hyperparameter search practical.
+
+
+Optimization behavior changes
+
+Original GA_repair:
+- Forget stage: gradient ascent on forget data.
+- Repair stage: SAM-based repair on retain data.
+- Useful, but the repair signal was still too weak relative to the damage caused by
+  aggressive forgetting in several runs.
+
+GA_repair_v2:
+- Keep the same general two-stage structure.
+- Make forgetting more targeted.
+- Make repair more informed through teacher distillation.
+- Make the transition across epochs more controlled through warmup + anchor schedule.
+- Add safeguards so sparse models do not fail numerically.
+
+
+Practical result of the shift
+
+The move from GA_repair to GA_repair_v2 was not just hyperparameter tuning.
+It changed the optimization behavior in three important ways:
+
+1. Forgetting became more targeted rather than purely aggressive.
+2. Repair became a preservation step, not just a re-training step.
+3. Sparse runs became operationally stable enough to evaluate seriously.
+
+In our final experiments, these changes substantially reduced the gap to retraining,
+especially on classwise forgetting.
+
+
+Implementation files
+
+The main implementation changes are in:
+
+- unlearn/GA_repair_v2.py
+- unlearn/__init__.py
+- arg_parser.py
+
+Related support changes were also made in:
+
+- utils.py
+- main_forget.py
+- unlearn/impl.py
+
+
+Summary
+
+GA_repair_v2 is a more controlled and thesis-ready version of GA_repair.
+Its main design principle is:
+
+"forget aggressively enough to remove the target information, but preserve the
+original retained behavior through explicit structure, scheduling, and stability
+controls."
