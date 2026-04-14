@@ -133,6 +133,8 @@ data/
 *.npy
 *.npz
 *.pth.tar
+*.csv
+*.svg
 *.png
 # Logs
 *.log
