@@ -1,0 +1,9 @@
+Method,Forgetting_type,Setting,UA,MIA,Efficacy,RA,TA,Time_Minutes
+Retrain,Classwise,Dense,100,100,95.39,81.98,78.13,65
+Retrain,Classwise,Sparse,100,100,88.20,78.13,75.00,63
+DistilRepair,Classwise,Dense,100,100,94.52,82.23,83.23,5.69
+DistilRepair,Classwise,Sparse,96.14,100,91.36,83.23,82.23,3.86
+Retrain,Random,Dense,10.30,76.82,94.25,78.58,75.00,66
+Retrain,Random,Sparse,13.74,73.81,85.72,75.00,70.00,64
+DistilRepair,Random,Dense,5.58,40.37,94.88,82.03,81.28,5.74
+DistilRepair,Random,Sparse,8.56,78.54,91.55,81.28,80.00,5.32

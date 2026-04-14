@@ -1,0 +1,58 @@
+Machine unlearning seeks to remove the influence of designated training samples from a learned model without requiring full retraining from scratch. Achieving this objective efficiently is difficult because approximate unlearning methods often face a pronounced trade-off between forgetting effectiveness and preservation of retained utility. The challenge is further amplified in sparse neural networks, where reduced parameter capacity can increase optimization instability and degrade post-unlearning performance. This thesis addresses these limitations by proposing DistilRepair, an anchored distillation framework for utility-preserving approximate unlearning in both dense and sparse models. DistilRepair combines targeted forget-side optimization with retain-side repair guided by a frozen teacher, while parameter anchoring constrains deviation from the pre-unlearning solution. The method further incorporates staged classifier-focused warmup, Batch Normalization freezing during forget updates, and numerical stability safeguards to improve optimization robustness, particularly under sparsity. Experiments on the HAM10000 skin lesion classification dataset with EfficientNet-B0 demonstrate that DistilRepair substantially reduces the gap between approximate unlearning and retraining. In dense class-wise forgetting, the proposed method attains near-retraining accuracy while reducing runtime by approximately 11x. In sparse class-wise forgetting at 80% pruning, DistilRepair achieves competitive forgetting performance while preserving substantially stronger retained utility than sparse retraining. These results show that anchored distillation provides an effective and practical basis for approximate unlearning in sparse and dense neural networks.
+
+Algorithm 1. DistilRepair
+
+Input:
+Pre-trained model theta_0; retain set D_r; forget set D_f; unlearning epochs T;
+forget steps S_f; retain steps S_r; forget learning rate eta_f; repair learning rate eta_r;
+distillation weight lambda_kd; anchor schedule lambda_a(t); forget margin m.
+
+Output:
+Unlearned model theta_T.
+
+1: Initialize student model theta <- theta_0
+2: Construct frozen teacher model theta_teacher <- theta_0
+3: Set anchor parameters theta_anchor <- theta_0
+4: Optionally reset the classifier row corresponding to the forgotten class
+5: for t = 1 to T do
+6:     if t is within warmup stage then
+7:         update only classifier parameters
+8:     else
+9:         update all trainable parameters
+10:    end if
+11:
+12:    Freeze BatchNorm statistics during forget updates
+13:    for i = 1 to S_f do
+14:        Sample minibatch (x_f, y_f) from D_f
+15:        Compute logits z_f = f(theta; x_f)
+16:        Compute targeted forget loss
+17:            L_forget = max(0, z_f[y_f] - max(z_f[not y_f]) + m)
+18:        Compute auxiliary forgetting terms
+19:            L_ce = CE(z_f, y_f)
+20:            L_ent = H(z_f)
+21:        Compute anchor penalty
+22:            L_anchor = ||theta - theta_anchor||_2^2
+23:        Form forget objective
+24:            L_GA = L_forget - alpha * L_ce - beta * L_ent + lambda_a(t) * L_anchor
+25:        Update theta by gradient ascent on L_GA
+26:        Apply finite-value checks and gradient clipping
+27:    end for
+28:
+29:    Unfreeze or restore BatchNorm state after forget stage
+30:    for j = 1 to S_r do
+31:        Sample minibatch (x_r, y_r) from D_r
+32:        Optionally apply Mixup to x_r and y_r
+33:        Compute teacher logits z_teacher = f(theta_teacher; x_r)
+34:        Compute student logits z_r = f(theta; x_r)
+35:        Compute retain-side repair objective
+36:            L_repair = CE(z_r, y_r) + lambda_kd * KL(z_r, z_teacher)
+37:                       + lambda_a(t) * ||theta - theta_anchor||_2^2
+38:        Update theta using SAM with gradient descent on L_repair
+39:        Apply finite-value checks and gradient clipping
+40:    end for
+41: end for
+42: Recalibrate BatchNorm statistics on retain data
+43: return theta
+
+
+Machine unlearning aims to remove the influence of specific training data from a trained model without incurring the full cost of retraining. This problem becomes more challenging in sparse neural networks, where limited model capacity can amplify the trade-off between effective forgetting and retained utility. In this thesis, we study approximate unlearning for both dense and sparse models and propose DistilRepair, an anchored distillation-based repair framework for utility-preserving unlearning. DistilRepair extends gradient-ascent-based forgetting with three key ideas: targeted forgetting, retain-side knowledge distillation from the original model, and parameter anchoring to stabilize recovery. The method further incorporates classifier warmup, BatchNorm freezing during forget updates, and numerical-stability safeguards to improve robustness in sparse settings. Experiments on the HAM10000 skin lesion dataset using EfficientNet-B0 show that DistilRepair substantially narrows the gap between approximate unlearning and full retraining. For dense class-wise forgetting, DistilRepair achieves near-retraining performance while reducing runtime by approximately 11 times. In sparse class-wise forgetting at 80\% pruning, the method maintains strong retained accuracy and competitive forgetting performance, while exceeding sparse retraining in overall utility. These results demonstrate that anchored distillation is an effective strategy for practical approximate unlearning in both dense and sparse neural networks.

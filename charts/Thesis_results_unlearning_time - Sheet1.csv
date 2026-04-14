@@ -1,0 +1,9 @@
+Method,Forgetting_type,Setting,Time_Minutes
+Retrain,Classwise,Dense,65
+Retrain,Classwise,Sparse,63
+DistilRepair,Classwise,Dense,5.69
+DistilRepair,Classwise,Sparse,3.86
+Retrain,Random,Dense,66
+Retrain,Random,Sparse,64
+DistilRepair,Random,Dense,5.74
+DistilRepair,Random,Sparse,5.32
