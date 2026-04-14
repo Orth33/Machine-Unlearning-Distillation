@@ -54,5 +54,194 @@ Unlearned model theta_T.
 42: Recalibrate BatchNorm statistics on retain data
 43: return theta
 
+Workflow Description Version 1: Major Algorithm Description
+
+DistilRepair begins with a pre-trained model and separates the original training data into two subsets: a forget set containing the samples to be removed and a retain set containing the samples whose utility should be preserved. A frozen teacher model is then constructed from the original checkpoint, and the same checkpoint is also stored as an anchor reference to limit harmful parameter drift during unlearning. During each epoch, the method first performs a targeted forget stage, where the model is updated on forget batches to suppress the influence of the designated data while keeping Batch Normalization stable and applying safeguards against numerical instability. After this, DistilRepair performs a repair stage on retain batches, where the student model is guided by both the ground-truth labels and the frozen teacher so that useful predictive behavior is recovered. An anchoring term is applied throughout training to keep the updated model close to the original solution, with stronger stabilization later in training. This forget-and-repair cycle is repeated for multiple epochs, followed by Batch Normalization recalibration on retained data to produce the final unlearned model.
+
+Workflow Description Version 2: Readable IEEE Conference Style
+
+DistilRepair operates in a staged forget-then-repair manner. Given a trained model, the training set is partitioned into forget and retain subsets, after which a frozen teacher and an anchor reference are created from the original checkpoint. In each epoch, the method first applies targeted updates on the forget subset to weaken the model's reliance on the data to be removed. It then applies repair updates on the retain subset, where teacher-guided distillation and supervised learning help restore retained utility. Anchoring is used throughout to constrain destructive drift, while stabilization steps improve robustness in sparse settings. By alternating these two stages across epochs and recalibrating the final model on retained data, DistilRepair achieves effective forgetting with strong preservation of retained performance.
+
+Detailed Workflow of the Original GA_repair Algorithm
+
+The original GA_repair algorithm follows an alternating two-stage approximate unlearning procedure. Starting from a pre-trained model, the marked training set is divided into a forget subset and a retain subset. In each epoch, GA_repair first performs a forget stage using gradient ascent on forget batches. This stage maximizes the standard classification loss on the forget data so that the model becomes less accurate on the samples or class that should be removed. To further encourage forgetting, the method also includes entropy maximization on forget logits, which pushes the model toward greater uncertainty on forgotten examples. An L1 regularization term may be included during this stage, and an anchor penalty constrains the model toward its pre-unlearning parameter state. After the forget updates, GA_repair switches to a repair stage on retain batches. This repair stage uses supervised learning with label smoothing, optional Mixup augmentation, and a SAM-based optimizer to recover retain-side utility that may have been damaged during forgetting. The two stages are repeated across epochs, and Batch Normalization statistics may be recalibrated at the end on retained data before final evaluation. In essence, GA_repair relies on broad forget-side ascent followed by retain-side recovery, with anchoring acting as a weak stabilizing force.
+
+Difference Between GA_repair and DistilRepair (GA_repair_v2)
+
+DistilRepair preserves the overall alternating forget-and-repair structure of GA_repair, but it makes the process more targeted, constrained, and stable. The main limitation of the original GA_repair method is that its forget stage is relatively coarse: maximizing cross-entropy on forget data can remove unwanted information, but it can also damage shared features that are still needed for retained utility. DistilRepair addresses this by replacing broad forget-side ascent with a more targeted margin-based forgetting objective that directly suppresses the forgotten-class decision boundary. It also introduces a frozen teacher model and retain-side knowledge distillation, which provide an explicit mechanism for preserving the original behavior on retained data during repair. In addition, DistilRepair uses classifier-only warmup in early epochs, scheduled anchoring that grows stronger later in training, BatchNorm freezing during forget updates, sparse-safe teacher reconstruction, and finite-value and gradient checks with clipping to prevent instability. Therefore, while GA_repair alternates between forgetting and repair in a relatively simple manner, DistilRepair turns that same idea into a controlled unlearning framework that forgets more precisely, repairs more effectively, and behaves more reliably in both dense and sparse models.
+
+Detailed Workflow of DistilRepair with Rationale
+
+DistilRepair starts from a pre-trained model and first separates the training data into a forget set and a retain set so that the optimization objective can explicitly distinguish between information that must be removed and information that should be preserved. A frozen teacher model is then reconstructed from the original checkpoint because the repair stage requires a stable reference for the model's pre-unlearning behavior on retained data. At the same time, the original parameters are stored as an anchor so that subsequent updates do not drift too far from the useful solution learned before unlearning, which is particularly important for sparse networks that are more sensitive to destructive changes. During the early epochs, DistilRepair optionally restricts updates to the classifier layer first, because forgetting at the output level is less disruptive than immediately changing the full feature extractor. In the forget stage, the method applies a margin-based objective on forget batches to directly suppress the forgotten class or target decision, since this is more targeted than simple gradient ascent on cross-entropy and therefore reduces unnecessary damage to shared representations. A small auxiliary negative cross-entropy term and entropy-based pressure are also included to further weaken confidence on forgotten data, while Batch Normalization is frozen during forget updates to avoid corrupting running statistics with narrow or imbalanced forget batches. In the repair stage, DistilRepair switches to retained data and combines standard supervised learning with teacher-guided distillation so that the model not only remains correct on retained labels but also stays close to its original predictive behavior; this is why a frozen teacher is essential. SAM is used for the repair optimizer because it encourages flatter, more stable updates and improves retained utility after the disruptive forget stage. Throughout training, the anchor weight is scheduled to become stronger later in the process, because early epochs require more freedom to forget while later epochs should emphasize stabilization and recovery. Finally, finite-value checks, finite-gradient checks, and gradient clipping are used to prevent numerical failure, especially in sparse settings, and Batch Normalization is recalibrated on retained data at the end so that the final unlearned model has more reliable validation and test behavior.
+
+PlantUML Flowchart Code for DistilRepair
+
+```plantuml
+@startuml
+title DistilRepair Workflow
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam activity {
+  StartColor #23433D
+  EndColor #23433D
+  BackgroundColor #F9F7F2
+  BorderColor #5E6E6A
+  DiamondBackgroundColor #EAF1F8
+  DiamondBorderColor #7E96B2
+  ArrowColor #23433D
+  FontColor #1F2F2C
+}
+skinparam note {
+  BackgroundColor #FFF8E8
+  BorderColor #C8A97E
+  FontColor #4A3A28
+}
+
+start
+
+:Load pre-trained model;
+:Split marked training data into
+forget set D_f and retain set D_r;
+
+:Build frozen teacher from
+original checkpoint;
+:Store original weights as anchor;
+
+if (Head reset enabled?) then (yes)
+  :Reset forgotten-class classifier row;
+else (no)
+endif
+
+:Initialize epoch = 1;
+
+while (epoch <= T?) is (yes)
+
+  if (epoch <= warmup epochs?) then (yes)
+    :Train classifier head only;
+  else (no)
+    :Train full model;
+  endif
+
+  :Compute scheduled anchor weight;
+
+  :Freeze BatchNorm during forget stage;
+
+  repeat
+    :Sample forget batch from D_f;
+    :Forward pass on forget batch;
+    :Compute forget objective:
+    - margin-based forget loss
+    - auxiliary negative CE term
+    - entropy encouragement
+    - anchor penalty;
+    if (Loss and gradients finite?) then (yes)
+      :Clip gradients;
+      :Gradient ascent update;
+    else (no)
+      :Skip unstable forget step;
+    endif
+  repeat while (More forget steps?) is (yes)
+
+  :Restore BatchNorm state;
+
+  repeat
+    :Sample retain batch from D_r;
+    :Optionally apply Mixup;
+    :Teacher forward pass on retain batch;
+    :Student forward pass on retain batch;
+    :Compute repair objective:
+    - supervised CE loss
+    - teacher distillation loss
+    - anchor penalty;
+    if (Loss and gradients finite?) then (yes)
+      :Clip gradients;
+      :SAM first step;
+      :Second forward/backward pass;
+      if (Second-step gradients finite?) then (yes)
+        :Clip gradients;
+        :SAM second step;
+      else (no)
+        :Skip unstable SAM second step;
+      endif
+    else (no)
+      :Skip unstable repair step;
+    endif
+  repeat while (More retain steps?) is (yes)
+
+  :epoch = epoch + 1;
+
+endwhile (no)
+
+:Re-enable evaluation mode;
+:Recalibrate BatchNorm on retain data;
+:Evaluate retain / forget / val / test sets;
+:Save final unlearned model;
+
+stop
+
+note right
+DistilRepair alternates between:
+1. Targeted forgetting on D_f
+2. Teacher-guided repair on D_r
+
+The anchor keeps the model close to
+the original solution, while stability
+checks make sparse training safer.
+end note
+
+@enduml
+```
+
+Short PlantUML Flowchart Code for DistilRepair
+
+```plantuml
+@startuml
+title DistilRepair
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam activity {
+  StartColor #23433D
+  EndColor #23433D
+  BackgroundColor #F9F7F2
+  BorderColor #5E6E6A
+  ArrowColor #23433D
+  FontColor #1F2F2C
+}
+
+start
+
+:Load pre-trained model;
+:Split data into forget set and retain set;
+:Build frozen teacher and anchor from the original checkpoint;
+
+while (Unlearning epochs remain?) is (yes)
+  :Apply warmup strategy if in early epochs;
+
+  :Forget stage on forget set;
+  note right
+  Targeted forgetting weakens
+  the influence of data to remove.
+  end note
+
+  :Repair stage on retain set;
+  note right
+  Teacher-guided repair restores
+  useful retained behavior.
+  end note
+
+  :Use anchoring and stability checks;
+endwhile (no)
+
+:Recalibrate BatchNorm on retain data;
+:Evaluate and save final unlearned model;
+
+stop
+@enduml
+```
+
 
 Machine unlearning aims to remove the influence of specific training data from a trained model without incurring the full cost of retraining. This problem becomes more challenging in sparse neural networks, where limited model capacity can amplify the trade-off between effective forgetting and retained utility. In this thesis, we study approximate unlearning for both dense and sparse models and propose DistilRepair, an anchored distillation-based repair framework for utility-preserving unlearning. DistilRepair extends gradient-ascent-based forgetting with three key ideas: targeted forgetting, retain-side knowledge distillation from the original model, and parameter anchoring to stabilize recovery. The method further incorporates classifier warmup, BatchNorm freezing during forget updates, and numerical-stability safeguards to improve robustness in sparse settings. Experiments on the HAM10000 skin lesion dataset using EfficientNet-B0 show that DistilRepair substantially narrows the gap between approximate unlearning and full retraining. For dense class-wise forgetting, DistilRepair achieves near-retraining performance while reducing runtime by approximately 11 times. In sparse class-wise forgetting at 80\% pruning, the method maintains strong retained accuracy and competitive forgetting performance, while exceeding sparse retraining in overall utility. These results demonstrate that anchored distillation is an effective strategy for practical approximate unlearning in both dense and sparse neural networks.
